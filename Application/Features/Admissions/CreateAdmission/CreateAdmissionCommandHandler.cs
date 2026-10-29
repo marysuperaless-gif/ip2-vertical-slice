@@ -20,7 +20,7 @@ public sealed class CreateAdmissionCommandHandler(IAppDbContext dbContext)
         {
             return Result<CreateAdmissionResponse>.Failure(
                 Error.NotFound("Student.NotFound", "Student not found."));
-        }
+        };
 
         var courses = await dbContext.Courses
             .Where(c => command.CourseIds.Contains(c.Id))

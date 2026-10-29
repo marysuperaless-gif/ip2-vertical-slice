@@ -6,9 +6,12 @@ using Application.Features.Students.CreateStudent;
 using Application.Features.Students.GetAllStudents;
 using Application.Features.Students.GetStudentById;
 using Domain.Common;
+using Microsoft.AspNetCore.Mvc;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
 public static class StudentEndpoints
 {
+    private const string GetByIdRouteName = "GetStudentById";
     public static void MapStudentEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/students")
@@ -23,8 +26,9 @@ public static class StudentEndpoints
             .WithSummary("Create a new student");
 
         group.MapGet("/{id:guid}", GetById)
-            .WithName("GetStudentById")
+            .WithName(GetByIdRouteName)
             .WithSummary("Get student by ID");
+
     }
 
     private static async Task<IResult> GetAll(
@@ -45,12 +49,12 @@ public static class StudentEndpoints
     {
         var result = await handler.HandleAsync(command, cancellationToken);
         return result.IsSuccess
-            ? TypedResults.CreatedAtRoute(result.Value, "GetStudentById", new { id = result.Value!.Id })
+            ? TypedResults.CreatedAtRoute(result.Value, "GetByIdRouteName", new { id = result.Value!.Id })
             : result.ToProblemDetails();
     }
 
     private static async Task<IResult> GetById(
-        Guid id,
+        Guid id, 
         IQueryHandler<GetStudentByIdQuery, Result<GetStudentByIdResponse>> handler,
         CancellationToken cancellationToken)
     {
@@ -59,5 +63,7 @@ public static class StudentEndpoints
         return result.IsSuccess
             ? TypedResults.Ok(result.Value)
             : result.ToProblemDetails();
+
+  
     }
 }
