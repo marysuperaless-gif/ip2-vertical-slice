@@ -18,6 +18,7 @@ public sealed class ApplicationUser : BaseEntity
     public bool IsActive { get; set; } = true;
 
     public DateTime? LastLoginAtUtc { get; set; }
+     
 
     // Security stamp: any token issued before this moment is rejected.
     // This is what makes "sign out everywhere" work without a refresh-token store.
