@@ -1,5 +1,5 @@
-using Api.Features.Auth;
 using Api.Features.Admissions;
+using Api.Features.Auth;
 using Api.Features.Courses;
 using Api.Features.Products;
 using Api.Features.Students;
@@ -9,6 +9,7 @@ using Application.Abstractions.Messaging;
 using Application.Features.Admissions.CreateAdmission;
 using Application.Features.Admissions.GetAdmissionById;
 using Application.Features.Admissions.GetAllAdmissions;
+using Application.Features.Auth.Login;
 using Application.Features.Auth.Register;
 using Application.Features.Courses.CreateCourse;
 using Application.Features.Courses.DeleteCourse;
@@ -29,6 +30,10 @@ using Infrastructure.Authentication;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using Microsoft.OpenApi;
 
 public partial class Program
 {
@@ -72,6 +77,8 @@ public partial class Program
         builder.Services.AddScoped<ICommandHandler<RegisterCommand, Result<RegisterResponse>>,
         RegisterCommandHandler>();
         builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+        builder.Services.AddScoped<ICommandHandler<LoginCommand, Result<LoginResponse>>,
+        LoginCommandHandler>();
 
         // API
         builder.Services.AddEndpointsApiExplorer();
@@ -79,24 +86,59 @@ public partial class Program
         {
             options.AddDocumentTransformer((document, _, _) =>
             {
-                document.Info.Title = "Vertical Slice API";
-                document.Info.Description = "A simple API demonstrating Vertical Slice Architecture";
+                document.Components ??= new OpenApiComponents();
+                document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
+                document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
+                {
+                    Type = SecuritySchemeType.Http,
+                    Scheme = "bearer",
+                    BearerFormat = "JWT",
+                    Description = "Paste the access token from /api/auth/login"
+                };
+                document.Security ??= [];
+                document.Security.Add(new OpenApiSecurityRequirement
+                {
+                    [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+                });
                 return Task.CompletedTask;
             });
         });
+
+        // JWT validation (BAGO mag-Build)
+        var jwtSection = builder.Configuration.GetSection(JwtOptions.SectionName);
+        builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = jwtSection["Issuer"],
+                    ValidAudience = jwtSection["Audience"],
+                    IssuerSigningKey = new SymmetricSecurityKey(
+                        Encoding.UTF8.GetBytes(jwtSection["SigningKey"]!)),
+                    ClockSkew = TimeSpan.FromSeconds(30)
+                };
+            });
+        builder.Services.AddAuthorization();
 
         var app = builder.Build();
 
         // Seed data
         await app.Services.MigrateAndSeedAsync();
-       
-            
+
         // Configure the HTTP request pipeline
         if (app.Environment.IsDevelopment())
         {
             app.MapOpenApi();
             app.MapScalarApiReference();
         }
+
+        // Middleware (bago ang endpoints, eksaktong pagkakasunod)
+        app.UseAuthentication();
+        app.UseAuthorization();
 
         // Root endpoint
         app.MapGet("/", () => "Welcome to the Vertical Slice API! Go to /scalar/v1 for API documentation.");
@@ -107,6 +149,7 @@ public partial class Program
         app.MapAdmissionEndpoints();
         app.MapProductEndpoints();
         app.MapAuthEndpoints();
+
         app.Run();
     }
 }

@@ -17,7 +17,8 @@ public static class CourseEndpoints
 
     {
         var group = app.MapGroup("/api/courses")
-            .WithTags("Courses");
+            .WithTags("Courses")
+            .RequireAuthorization();
 
         group.MapGet("/", GetAll)
             .WithName("GetAllCourses")
