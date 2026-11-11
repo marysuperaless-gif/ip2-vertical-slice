@@ -1,12 +1,15 @@
+using Api.Features.Auth;
 using Api.Features.Admissions;
 using Api.Features.Courses;
 using Api.Features.Products;
 using Api.Features.Students;
+using Application.Abstractions;
 using Application.Abstractions.Data;
 using Application.Abstractions.Messaging;
 using Application.Features.Admissions.CreateAdmission;
 using Application.Features.Admissions.GetAdmissionById;
 using Application.Features.Admissions.GetAllAdmissions;
+using Application.Features.Auth.Register;
 using Application.Features.Courses.CreateCourse;
 using Application.Features.Courses.DeleteCourse;
 using Application.Features.Courses.GetAllCourses;
@@ -22,10 +25,10 @@ using Application.Features.Students.GetStudentById;
 using Domain.Common;
 using Domain.Entities;
 using FluentValidation;
+using Infrastructure.Authentication;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
-using Application.Abstractions;
 
 public partial class Program
 {
@@ -58,6 +61,17 @@ public partial class Program
         builder.Services.AddScoped<ICommandHandler<UpdateProductCommand, Result<GetProductByIdResponse>>, UpdateProductHandler>();
         builder.Services.AddScoped<ICommandHandler<DeleteProductCommand, Result<Guid>>, DeleteProductHandler>();
         builder.Services.AddScoped<IPasswordHasher, Infrastructure.Authentication.PasswordHasher>();
+        builder.Services.AddOptions<JwtOptions>()
+        .Bind(builder.Configuration.GetSection(JwtOptions.SectionName))
+        .Validate(o => !string.IsNullOrWhiteSpace(o.SigningKey),
+        "Jwt:SigningKey is required.")
+        .Validate(o => System.Text.Encoding.UTF8.GetByteCount(o.SigningKey ?? "") >= 32,
+        "Jwt:SigningKey must be at least 32 characters.")
+        .ValidateOnStart();
+        builder.Services.AddScoped<ITokenService, JwtTokenService>();
+        builder.Services.AddScoped<ICommandHandler<RegisterCommand, Result<RegisterResponse>>,
+        RegisterCommandHandler>();
+        builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 
         // API
         builder.Services.AddEndpointsApiExplorer();
@@ -92,6 +106,7 @@ public partial class Program
         app.MapCourseEndpoints();
         app.MapAdmissionEndpoints();
         app.MapProductEndpoints();
+        app.MapAuthEndpoints();
         app.Run();
     }
 }
