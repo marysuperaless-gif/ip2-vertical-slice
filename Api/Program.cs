@@ -69,6 +69,7 @@ public partial class Program
         builder.Services.AddScoped<IQueryHandler<GetAllProductsQuery, Result<List<GetProductByIdResponse>>>, GetAllProductsHandler>();
         builder.Services.AddScoped<ICommandHandler<UpdateProductCommand, Result<GetProductByIdResponse>>, UpdateProductHandler>();
         builder.Services.AddScoped<ICommandHandler<DeleteProductCommand, Result<Guid>>, DeleteProductHandler>();
+        builder.Services.AddSingleton<IAuthorizationHandler, AdmissionOwnerHandler>();
 
         // Ownership check (BOLA fix)
         builder.Services.AddSingleton<IAuthorizationHandler, AdmissionOwnerHandler>();
