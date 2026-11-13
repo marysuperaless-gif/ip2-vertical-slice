@@ -1,3 +1,4 @@
+using Api.Common.Authorization;
 using Api.Features.Admissions;
 using Api.Features.Auth;
 using Api.Features.Courses;
@@ -29,6 +30,7 @@ using FluentValidation;
 using Infrastructure.Authentication;
 using Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -68,6 +70,9 @@ public partial class Program
         builder.Services.AddScoped<ICommandHandler<UpdateProductCommand, Result<GetProductByIdResponse>>, UpdateProductHandler>();
         builder.Services.AddScoped<ICommandHandler<DeleteProductCommand, Result<Guid>>, DeleteProductHandler>();
 
+        // Ownership check (BOLA fix)
+        builder.Services.AddSingleton<IAuthorizationHandler, AdmissionOwnerHandler>();
+
         // Auth services
         builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
         builder.Services.AddScoped<IPasswordHasher, Infrastructure.Authentication.PasswordHasher>();
@@ -87,7 +92,7 @@ public partial class Program
                 "Jwt:SigningKey must be at least 32 characters.")
             .ValidateOnStart();
 
-        // JWT validation (BAGO ang Build)
+        // JWT validation
         var jwtSection = builder.Configuration.GetSection(JwtOptions.SectionName);
 
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -108,59 +113,42 @@ public partial class Program
 
                 options.Events = new JwtBearerEvents
                 {
-                    OnAuthenticationFailed = context =>
-                    {
-                        Console.WriteLine("AUTH FAILED: " + context.Exception.Message);
-                        return Task.CompletedTask;
-                    },
                     OnTokenValidated = async context =>
                     {
-                        try
+                        var dbContext = context.HttpContext.RequestServices
+                            .GetRequiredService<IAppDbContext>();
+
+                        var jti = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Jti);
+                        var sub = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                                  ?? context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                        var iatRaw = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Iat);
+
+                        // 1. Na-revoke ba ang token na ito? (logout)
+                        if (jti is not null &&
+                            await dbContext.RevokedTokens.AnyAsync(r => r.Jti == jti))
                         {
-                            var dbContext = context.HttpContext.RequestServices
-                                .GetRequiredService<IAppDbContext>();
-
-                            var jti = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Jti);
-                            var sub = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub)
-                                      ?? context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
-                            var iatRaw = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Iat)
-                                         ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Nbf);
-
-                            Console.WriteLine($"TOKEN CHECK jti={jti} sub={sub} iat={iatRaw}");
-
-                            // 1. Revoked ba ang token na ito?
-                            if (jti is not null &&
-                                await dbContext.RevokedTokens.AnyAsync(r => r.Jti == jti))
-                            {
-                                Console.WriteLine("TOKEN REVOKED");
-                                context.Fail("Token has been revoked.");
-                                return;
-                            }
-
-                            // 2. Security stamp (logout-all)
-                            if (sub is not null && Guid.TryParse(sub, out var userId)
-                                && iatRaw is not null && long.TryParse(iatRaw, out var iatUnix))
-                            {
-                                var issuedAtUtc = DateTimeOffset.FromUnixTimeSeconds(iatUnix).UtcDateTime;
-                                var user = await dbContext.Users.FindAsync([userId]);
-
-                                if (user?.TokensValidFromUtc is { } validFrom && issuedAtUtc < validFrom)
-                                {
-                                    Console.WriteLine("TOKEN OLDER THAN STAMP");
-                                    context.Fail("Token was issued before the user's last sign-out-everywhere.");
-                                }
-                            }
+                            context.Fail("Token has been revoked.");
+                            return;
                         }
-                        catch (Exception ex)
+
+                        // 2. Security stamp (logout-all)
+                        if (sub is not null && Guid.TryParse(sub, out var userId)
+                            && iatRaw is not null && long.TryParse(iatRaw, out var iatUnix))
                         {
-                            Console.WriteLine("OnTokenValidated ERROR: " + ex);
-                            context.Fail(ex);
+                            var issuedAtUtc = DateTimeOffset.FromUnixTimeSeconds(iatUnix).UtcDateTime;
+                            var user = await dbContext.Users.FindAsync([userId]);
+
+                            if (user?.TokensValidFromUtc is { } validFrom && issuedAtUtc < validFrom)
+                            {
+                                context.Fail("Token was issued before the user's last sign-out-everywhere.");
+                            }
                         }
                     }
                 };
             });
 
-        builder.Services.AddAuthorization();
+        // Policies (Registrar-only)
+        builder.Services.AddAppAuthorization();
 
         // API + Scalar Bearer
         builder.Services.AddEndpointsApiExplorer();
@@ -198,9 +186,30 @@ public partial class Program
             app.MapScalarApiReference();
         }
 
+        // JSON body para sa 401/403
+        app.UseStatusCodePages(async context =>
+        {
+            var response = context.HttpContext.Response;
+
+            if (response.StatusCode is StatusCodes.Status401Unauthorized
+                                    or StatusCodes.Status403Forbidden)
+            {
+                response.ContentType = "application/problem+json";
+                await response.WriteAsJsonAsync(new Microsoft.AspNetCore.Mvc.ProblemDetails
+                {
+                    Status = response.StatusCode,
+                    Title = response.StatusCode == StatusCodes.Status401Unauthorized
+                        ? "Unauthorized" : "Forbidden",
+                    Detail = response.StatusCode == StatusCodes.Status401Unauthorized
+                        ? "Authentication is required to access this resource."
+                        : "You do not have permission to perform this action."
+                });
+            }
+        });
+
         // Middleware: EKSAKTONG PAGKAKASUNOD
-        app.UseAuthentication();
-        app.UseAuthorization();
+        app.UseAuthentication();   // who are you?
+        app.UseAuthorization();    // are you allowed?
 
         // Root endpoint
         app.MapGet("/", () => "Welcome to the Vertical Slice API! Go to /scalar/v1 for API documentation.");
